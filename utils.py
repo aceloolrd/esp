@@ -7,7 +7,7 @@ def save_network(network, filename):
         pickle.dump(data, f)
 
 def load_network(filename):
-    from network import RecurrentNetwork 
+    from esp.network import RecurrentNetwork 
     with open(filename, "rb") as f:
         data = pickle.load(f)
     return RecurrentNetwork.from_weights(data)
