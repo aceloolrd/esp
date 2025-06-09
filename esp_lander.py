@@ -3,7 +3,7 @@ import os
 import numpy as np
 import gymnasium as gym
 from esp import ESPPopulation
-
+from visualizations import visualize_network, plot_metric, save_network_legend
 from utils import save_network, load_network
 from network import RecurrentNetwork 
 
@@ -71,6 +71,91 @@ def train(args):
     plot_metric(loss_history, "Loss (-Fitness)", os.path.join(args.struct_dir, "loss_curve.png"))
 
     env.close()
+
+
+def test(args):
+    env = gym.make('LunarLanderContinuous-v3', render_mode='human')
+    net = load_network(args.load_weights)
+
+    for ep in range(args.test_episodes):
+        obs, _ = env.reset()
+        hidden_state = None
+        done = False
+        total_reward = 0
+        step_count = 0
+
+        landing_analysis = {
+            'final_position': (0, 0),
+            'final_velocity': (0, 0),
+            'final_angle': 0,
+            'leg_contacts': [False, False],
+            'main_engine_total': 0.0,
+            'side_engine_total': 0.0
+        }
+
+        while not done:
+            action, hidden_state = net.forward(obs, hidden_state)
+            obs, reward, terminated, truncated, _ = env.step(action)
+            done = terminated or truncated
+
+            x, y, vx, vy, angle, angular_vel, leg1_contact, leg2_contact = obs
+            main_engine = max(0, action[0])
+            side_engine = abs(action[1])
+
+            landing_analysis['main_engine_total'] += main_engine
+            landing_analysis['side_engine_total'] += side_engine
+
+            total_reward += reward
+            step_count += 1
+
+        x, y, vx, vy, angle, _, leg1_contact, leg2_contact = obs
+        landing_analysis.update({
+            'final_position': (x, y),
+            'final_velocity': (vx, vy),
+            'final_angle': angle,
+            'leg_contacts': [bool(leg1_contact), bool(leg2_contact)]
+        })
+
+        if abs(vx) < 1 and abs(vy) < 1 and abs(angle) < 0.2:
+            landing_status = "УСПЕШНАЯ"
+            landing_bonus = 200
+        else:
+            landing_status = "НЕУДАЧНАЯ"
+            landing_bonus = -100
+
+        distance = np.sqrt(x ** 2 + y ** 2)
+
+        output_lines = [
+            f"\n=== Тест эпизода {ep + 1} ===",
+            f"Общий результат: {total_reward:.2f} ({landing_status})",
+            f"Шагов выполнено: {step_count}",
+            "\nФизические параметры посадки:",
+            f"  Позиция:       ({x:.4f}, {y:.4f})",
+            f"  Расстояние:    {distance:.4f}",
+            f"  Скорость:      (x={vx:.4f}, y={vy:.4f})",
+            f"  Угол:          {angle:.4f} рад",
+            f"  Контакт опор:  {'1' if leg1_contact else '0'}, {'1' if leg2_contact else '0'}",
+            f"  Топливо:       главный: {landing_analysis['main_engine_total']:.4f}, боковой: {landing_analysis['side_engine_total']:.4f}",
+            "\nКритерии успешной посадки:",
+            f"  Горизонтальная скорость: {abs(vx):.4f} м/с {'✓' if abs(vx) < 1 else '✗'} (< 1 м/с)",
+            f"  Вертикальная скорость:   {abs(vy):.4f} м/с {'✓' if abs(vy) < 1 else '✗'} (< 1 м/с)",
+            f"  Угол наклона:            {abs(angle):.4f} рад {'✓' if abs(angle) < 0.2 else '✗'} (< 0.2 рад)",
+            f"  Обе опоры:               {'✓' if leg1_contact and leg2_contact else '✗'}",
+            f"  Бонус за посадку:        {landing_bonus} (фактически учтен в общем вознаграждении)"
+        ]
+
+        for line in output_lines:
+            print(line)
+
+    env.close()
+
+
+def visualize(args):
+    net = load_network(args.load_weights)
+    visualize_network(net, args.outfile)
+    save_network_legend("network_legend.png")
+    print(f"Network structure saved as {args.outfile}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ESP for LunarLanderContinuous-v3")
