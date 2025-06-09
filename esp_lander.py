@@ -7,6 +7,27 @@ from visualizations import visualize_network, plot_metric, save_network_legend
 from utils import save_network, load_network
 from network import RecurrentNetwork 
 
+def record_landing_gif(network, epoch, video_dir="videos"):
+    os.makedirs(video_dir, exist_ok=True)
+    env = gym.make("LunarLanderContinuous-v3", render_mode="rgb_array_list")
+    obs, _ = env.reset()
+    done = False
+    frames = []
+    hidden_state = None
+    while not done:
+        frame = env.render()
+        while isinstance(frame, list) or (isinstance(frame, np.ndarray) and frame.ndim > 3):
+            frame = frame[0]
+        frames.append(frame)
+        action, hidden_state = network.forward(obs, hidden_state)
+        obs, reward, terminated, truncated, _ = env.step(action)
+        done = terminated or truncated
+    env.close()
+    import imageio
+    gif_path = f"{video_dir}/lander_epoch_{epoch+1:04d}.gif"
+    imageio.mimsave(gif_path, [frame for frame in frames], fps=30)
+    print(f"Saved landing gif: {gif_path}")
+
 def train(args):
     env = gym.make('LunarLanderContinuous-v3', render_mode='human')
 
