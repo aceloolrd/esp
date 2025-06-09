@@ -119,7 +119,7 @@ def visualize_network(network, filename):
 
 def plot_metric(metric_history, ylabel, filename):
     plt.figure(figsize=(6, 4))
-    sns.lineplot(x=np.arange(len(metric_history)), y=metric_history, marker="o"))
+    sns.lineplot(x=np.arange(len(metric_history)), y=metric_history, marker="o")
     plt.xlabel("Epoch")
     plt.ylabel(ylabel)
     plt.title(f"{ylabel} over epochs")
