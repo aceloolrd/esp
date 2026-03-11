@@ -12,7 +12,6 @@ class ESPPopulation:
                  trials_per_individual: int = 10,
                  alpha_cauchy: float = 1.0,
                  stagnation_b: int = 20,
-                 mutation_rate: float = 0.1,
                  crossover_rate: float = 0.5):
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -21,7 +20,6 @@ class ESPPopulation:
         self.trials_per_individual = trials_per_individual
         self.alpha_cauchy = alpha_cauchy
         self.stagnation_b = stagnation_b
-        self.mutation_rate = mutation_rate
         self.crossover_rate = crossover_rate
 
         self.subpopulations = [
@@ -133,9 +131,6 @@ class ESPPopulation:
             for idx in range(half, self.subpop_size):
                 perturb = self.alpha_cauchy * np.random.standard_cauchy(size=subpop_new[idx].shape)
                 subpop_new[idx] += perturb
-            for idx in range(self.subpop_size):
-                if np.random.rand() < self.mutation_rate:
-                    subpop_new[idx] += np.random.randn(*subpop_new[idx].shape) * 0.01
             self.subpopulations[i] = subpop_new
 
     def burst_mutation(self):
@@ -153,67 +148,80 @@ class ESPPopulation:
             self.cum_fitness[i].fill(0.0)
             self.count_trials[i].fill(0)
 
+    @staticmethod
+    def _trim_genome_remove_neuron(vec: np.ndarray, input_size: int,
+                                   old_hidden: int, output_size: int,
+                                   remove_idx: int) -> np.ndarray:
+        ih = vec[:input_size]
+        hh = vec[input_size:input_size + old_hidden]
+        ho = vec[input_size + old_hidden:input_size + old_hidden + output_size]
+        new_hh = np.delete(hh, remove_idx)
+        return np.concatenate([ih, new_hh, ho])
+
     def adapt_structure(self, env: gym.Env, n_episodes: int = 1):
         print("=== ADAPT STRUCTURE ===")
-        removed_any = True
-        while removed_any:
-            removed_any = False
-            current_best = self._compute_global_best_fitness()
-            old_subpops = [list(sp) for sp in self.subpopulations]
-            old_hidden = self.hidden_size
-            for i in range(old_hidden):
-                tmp_pops = [old_subpops[k] for k in range(old_hidden) if k != i]
-                tmp_hidden = old_hidden - 1
-                tmp = ESPPopulation(
-                    self.input_size, tmp_hidden, self.output_size,
-                    self.subpop_size, self.trials_per_individual,
-                    self.alpha_cauchy, self.stagnation_b,
-                    self.mutation_rate, self.crossover_rate
-                )
-                tmp.subpopulations = [[ind.copy() for ind in sp] for sp in tmp_pops]
-                best_tmp = tmp._compute_global_best_fitness_from_avg(
-                    tmp.evaluate(env, n_episodes=n_episodes)
-                )
-                if best_tmp > current_best:
-                    print(f"Удаляем подпопуляцию {i}: {current_best:.3f} → {best_tmp:.3f}")
-                    self.subpopulations = tmp.subpopulations
-                    self.hidden_size = tmp_hidden
-                    removed_any = True
-                    break
-        # Если не удалили, добавляем новую и расширяем старые геномы
+        # Баг 1: получаем current_best из свежей оценки, а не из обнулённых данных после burst
+        current_avg = self.evaluate(env, n_episodes=n_episodes)
+        current_best = self._compute_global_best_fitness_from_avg(current_avg)
+
+        # Баг 5: однократный проход, а не while-цикл
+        removed_any = False
+        old_subpops = [list(sp) for sp in self.subpopulations]
+        old_hidden = self.hidden_size
+        for i in range(old_hidden):
+            # Баг 3: обрезаем геномы — удаляем из w_hh элемент с индексом i
+            tmp_pops = []
+            for k in range(old_hidden):
+                if k == i:
+                    continue
+                trimmed = [
+                    self._trim_genome_remove_neuron(
+                        ind, self.input_size, old_hidden, self.output_size, i
+                    )
+                    for ind in old_subpops[k]
+                ]
+                tmp_pops.append(trimmed)
+            tmp_hidden = old_hidden - 1
+            tmp = ESPPopulation(
+                self.input_size, tmp_hidden, self.output_size,
+                self.subpop_size, self.trials_per_individual,
+                self.alpha_cauchy, self.stagnation_b,
+                self.crossover_rate
+            )
+            tmp.subpopulations = [[ind.copy() for ind in sp] for sp in tmp_pops]
+            best_tmp = tmp._compute_global_best_fitness_from_avg(
+                tmp.evaluate(env, n_episodes=n_episodes)
+            )
+            if best_tmp > current_best:
+                print(f"Удаляем подпопуляцию {i}: {current_best:.3f} → {best_tmp:.3f}")
+                self.subpopulations = tmp.subpopulations
+                self.hidden_size = tmp_hidden
+                removed_any = True
+                break
+
         if not removed_any:
             old_h = self.hidden_size
             self.hidden_size += 1
-            # добавляем новую подпопуляцию (с правильной длиной генома)
+            # добавляем новую подпопуляцию с правильной длиной генома
             self.subpopulations.append([
                 np.random.randn(self.input_size + self.hidden_size + self.output_size) * 0.1
                 for _ in range(self.subpop_size)
             ])
-            # расширяем все старые геномы
+            # расширяем старые геномы: только w_hh +1, w_ho не трогаем (Баг 2)
             for i in range(old_h):
                 new_subpop = []
                 for vec in self.subpopulations[i]:
                     ih = vec[:self.input_size]
-                    hh = vec[self.input_size:self.input_size+old_h]
-                    ho = vec[self.input_size+old_h:]
-                    # расширяем hh и ho
+                    hh = vec[self.input_size:self.input_size + old_h]
+                    ho = vec[self.input_size + old_h:]
                     new_hh = np.concatenate([hh, np.random.randn(1) * 0.1])
-                    new_ho = np.concatenate([ho, np.random.randn(self.output_size) * 0.1])
-                    new_vec = np.concatenate([ih, new_hh, new_ho])
+                    new_vec = np.concatenate([ih, new_hh, ho])
                     new_subpop.append(new_vec)
                 self.subpopulations[i] = new_subpop
+
         # сброс статистики
         self.cum_fitness = [np.zeros(self.subpop_size) for _ in range(self.hidden_size)]
         self.count_trials = [np.zeros(self.subpop_size, dtype=np.int32) for _ in range(self.hidden_size)]
-
-    def _compute_global_best_fitness(self) -> float:
-        best_value = -np.inf
-        for i in range(self.hidden_size):
-            avg_i = self.cum_fitness[i] / np.maximum(self.count_trials[i], 1)
-            best_i = np.max(avg_i)
-            if best_i > best_value:
-                best_value = best_i
-        return best_value
 
     def _compute_global_best_fitness_from_avg(self, avg_fitness: list[np.ndarray]) -> float:
         best = -np.inf

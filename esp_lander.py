@@ -3,7 +3,7 @@ import os
 import numpy as np
 import gymnasium as gym
 from esp import ESPPopulation
-from visualizations import visualize_network, plot_metric, save_network_legend
+from visualizations import visualize_network, plot_metric
 from utils import save_network, load_network
 from network import RecurrentNetwork 
 
@@ -29,7 +29,7 @@ def record_landing_gif(network, epoch, video_dir="videos"):
     print(f"Saved landing gif: {gif_path}")
 
 def train(args):
-    env = gym.make('LunarLanderContinuous-v3', render_mode='human')
+    env = gym.make('LunarLanderContinuous-v3', render_mode=None)
 
     pop = ESPPopulation(
         input_size=8,
@@ -39,12 +39,12 @@ def train(args):
         trials_per_individual=args.trials_per_individual if hasattr(args, 'trials_per_individual') else 10,
         alpha_cauchy=args.alpha_cauchy if hasattr(args, 'alpha_cauchy') else 1.0,
         stagnation_b=args.stagnation_b if hasattr(args, 'stagnation_b') else 20,
-        mutation_rate=args.mutation_rate if hasattr(args, 'mutation_rate') else 0.1,
         crossover_rate=args.crossover_rate if hasattr(args, 'crossover_rate') else 0.5
     )
 
     reward_history = []
     loss_history = []
+    best_fitness_ever = -np.inf
 
     os.makedirs(args.struct_dir, exist_ok=True)
 
@@ -57,6 +57,12 @@ def train(args):
         loss_history.append(-best_fitness_current)
 
         print(f"Лучший avg_fitness на эпохе {epoch+1}: {best_fitness_current:.3f}")
+
+        if best_fitness_current > best_fitness_ever:
+            best_fitness_ever = best_fitness_current
+            save_network(pop.get_best_network(), args.save_weights)
+            record_landing_gif(pop.get_best_network(), epoch)
+            print(f"Новый рекорд {best_fitness_ever:.3f} — модель и gif сохранены")
 
         pop.best_history.append(best_fitness_current)
         if len(pop.best_history) == pop.stagnation_b:
@@ -82,8 +88,8 @@ def train(args):
         visualize_network(net_vis, f"{args.struct_dir}/epoch_{epoch+1:04d}.png")
 
         if (epoch + 1) % 10 == 0:
-            net_for_gif = pop.get_current_network()
-            record_landing_gif(net_for_gif, epoch + 1)
+            plot_metric(reward_history, "Best Avg Fitness", os.path.join(args.struct_dir, "reward_curve.png"))
+            plot_metric(loss_history, "Loss (-Fitness)", os.path.join(args.struct_dir, "loss_curve.png"))
 
     best_network = pop.get_best_network()
     save_network(best_network, args.save_weights)
@@ -174,7 +180,6 @@ def test(args):
 def visualize(args):
     net = load_network(args.load_weights)
     visualize_network(net, args.outfile)
-    save_network_legend("network_legend.png")
     print(f"Network structure saved as {args.outfile}")
 
 
@@ -184,6 +189,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--hidden_size", type=int, default=12)
     parser.add_argument("--subpop_size", type=int, default=20)
+    parser.add_argument("--trials_per_individual", type=int, default=10)
     parser.add_argument("--episodes_per_eval", type=int, default=1)
     parser.add_argument("--struct_dir", type=str, default="structures")
     parser.add_argument("--save_weights", type=str, default="model.pkl")
