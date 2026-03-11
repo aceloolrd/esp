@@ -1,1 +1,9 @@
-/.venv
+/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+CLAUDE.md
+lec7.pdf
+structures/epoch_*.png
+videos/lander_epoch_00[0-9][0-9].gif
+videos/lander_epoch_0[0-1][0-4][0-9].gif
